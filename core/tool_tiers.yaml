@@ -52,6 +52,7 @@ calendar:
   extended:
     - delete_event
     - query_freebusy
+    - update_calendar
   complete: []
 
 docs:
