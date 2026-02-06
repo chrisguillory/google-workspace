@@ -554,6 +554,7 @@ async def create_event(
     use_default_reminders: bool = True,
     transparency: Optional[str] = None,
     visibility: Optional[str] = None,
+    color_id: Optional[str] = None,
     guests_can_modify: Optional[bool] = None,
     guests_can_invite_others: Optional[bool] = None,
     guests_can_see_other_guests: Optional[bool] = None,
@@ -577,6 +578,7 @@ async def create_event(
         use_default_reminders (bool): Whether to use calendar's default reminders. If False, uses custom reminders. Defaults to True.
         transparency (Optional[str]): Event transparency for busy/free status. "opaque" shows as Busy (default), "transparent" shows as Available/Free. Defaults to None (uses Google Calendar default).
         visibility (Optional[str]): Event visibility. "default" uses calendar default, "public" is visible to all, "private" is visible only to attendees, "confidential" is same as private (legacy). Defaults to None (uses Google Calendar default).
+        color_id (Optional[str]): Event color ID (1-11). If None, uses default color.
         guests_can_modify (Optional[bool]): Whether attendees other than the organizer can modify the event. Defaults to None (uses Google Calendar default of False).
         guests_can_invite_others (Optional[bool]): Whether attendees other than the organizer can invite others to the event. Defaults to None (uses Google Calendar default of True).
         guests_can_see_other_guests (Optional[bool]): Whether attendees other than the organizer can see who the event's attendees are. Defaults to None (uses Google Calendar default of True).
@@ -638,6 +640,9 @@ async def create_event(
 
     # Handle visibility validation
     _apply_visibility_if_valid(event_body, visibility, "create_event")
+
+    if color_id is not None:
+        event_body["colorId"] = color_id
 
     # Handle guest permissions
     if guests_can_modify is not None:
@@ -1231,3 +1236,82 @@ async def query_freebusy(
         f"[query_freebusy] Successfully retrieved free/busy information for {len(calendars)} calendar(s)"
     )
     return result_text
+
+
+@server.tool()
+@handle_http_errors("update_calendar", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def update_calendar(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+    summary: Optional[str] = None,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+    location: Optional[str] = None,
+) -> str:
+    """Updates metadata of an existing calendar (name, description, timezone, location).
+
+    Note: The primary calendar cannot be renamed. Use list_calendars to find calendar IDs.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar to update. Required.
+        summary (Optional[str]): New name/title for the calendar.
+        description (Optional[str]): New description for the calendar.
+        timezone (Optional[str]): New timezone (e.g., "America/New_York"). Must be a valid IANA timezone.
+        location (Optional[str]): New geographic location for the calendar.
+
+    Returns:
+        str: Confirmation message with updated calendar details.
+    """
+    logger.info(
+        f"[update_calendar] Invoked. Email: '{user_google_email}', Calendar ID: '{calendar_id}'"
+    )
+
+    calendar_body: Dict[str, Any] = {}
+    if summary is not None:
+        calendar_body["summary"] = summary
+    if description is not None:
+        calendar_body["description"] = description
+    if timezone is not None:
+        calendar_body["timeZone"] = timezone
+    if location is not None:
+        calendar_body["location"] = location
+
+    if not calendar_body:
+        raise Exception("No fields provided to update. Provide at least one of: summary, description, timezone, location.")
+
+    logger.info(
+        f"[update_calendar] Updating calendar '{calendar_id}' with fields: {list(calendar_body.keys())}"
+    )
+
+    updated_calendar = await asyncio.to_thread(
+        lambda: service.calendars()
+        .patch(calendarId=calendar_id, body=calendar_body)
+        .execute()
+    )
+
+    updated_summary = updated_calendar.get("summary", "Unknown")
+    updated_tz = updated_calendar.get("timeZone", "")
+    updated_desc = updated_calendar.get("description", "")
+    updated_loc = updated_calendar.get("location", "")
+
+    details = [f'Name: "{updated_summary}"']
+    if updated_tz:
+        details.append(f"Timezone: {updated_tz}")
+    if updated_desc:
+        details.append(f'Description: "{updated_desc}"')
+    if updated_loc:
+        details.append(f'Location: "{updated_loc}"')
+
+    confirmation_message = (
+        f"Successfully updated calendar '{updated_summary}' (ID: {calendar_id}) "
+        f"for {user_google_email}. "
+        + ", ".join(details)
+    )
+
+    logger.info(
+        f"Calendar updated successfully for {user_google_email}. ID: {calendar_id}"
+    )
+    return confirmation_message
