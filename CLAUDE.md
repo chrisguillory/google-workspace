@@ -5,6 +5,13 @@
 This is a fork of [taylorwilsdon/google_workspace_mcp](https://github.com/taylorwilsdon/google_workspace_mcp). Upstream
 is active with frequent contributions.
 
+**Remotes:**
+- `origin` → `chrisguillory/google-workspace` (our fork - push here)
+- `upstream` → `taylorwilsdon/google_workspace_mcp` (source of truth - pull from here)
+
+**PRs go to our fork (`chrisguillory/google-workspace`), NOT upstream.**
+Only open PRs to upstream when intentionally contributing back.
+
 ## Workflow
 
 **Before starting any feature work, always sync with upstream:**
@@ -24,6 +31,8 @@ git fetch upstream && git rebase upstream/main
 git checkout -b feature/<name>
 # ... work ...
 git push origin feature/<name>
+# PR to our fork:
+gh pr create --repo chrisguillory/google-workspace
 ```
 
 ## Project Structure
