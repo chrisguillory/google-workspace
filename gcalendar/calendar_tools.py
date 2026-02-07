@@ -1323,3 +1323,349 @@ async def update_calendar(
         f"Calendar updated successfully for {user_google_email}. ID: {calendar_id}"
     )
     return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("create_calendar", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def create_calendar(
+    service,
+    user_google_email: str,
+    summary: str,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+    location: Optional[str] = None,
+) -> str:
+    """Creates a new calendar.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        summary (str): Calendar name/title. Required.
+        description (Optional[str]): Calendar description.
+        timezone (Optional[str]): Calendar timezone (e.g., "America/New_York"). Defaults to user's timezone.
+        location (Optional[str]): Geographic location for the calendar.
+
+    Returns:
+        str: Confirmation message with calendar ID and details.
+    """
+    logger.info(
+        f"[create_calendar] Invoked. Email: '{user_google_email}', Summary: '{summary}'"
+    )
+
+    calendar_body: Dict[str, Any] = {"summary": summary}
+    if description is not None:
+        calendar_body["description"] = description
+    if timezone is not None:
+        calendar_body["timeZone"] = timezone
+    if location is not None:
+        calendar_body["location"] = location
+
+    created_calendar = await asyncio.to_thread(
+        lambda: service.calendars().insert(body=calendar_body).execute()
+    )
+
+    calendar_id = created_calendar.get("id", "Unknown")
+    calendar_summary = created_calendar.get("summary", "Unknown")
+    details = [f'Name: "{calendar_summary}"', f"ID: {calendar_id}"]
+    if created_calendar.get("timeZone"):
+        details.append(f"Timezone: {created_calendar['timeZone']}")
+    if created_calendar.get("description"):
+        details.append(f'Description: "{created_calendar["description"]}"')
+
+    confirmation_message = (
+        f"Successfully created calendar for {user_google_email}. "
+        + ", ".join(details)
+    )
+    logger.info(f"Calendar created for {user_google_email}. ID: {calendar_id}")
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("delete_calendar", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def delete_calendar(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+) -> str:
+    """Permanently deletes a calendar and all its events. This action cannot be undone.
+
+    Note: The primary calendar cannot be deleted.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar to delete. Required. Use list_calendars to find calendar IDs.
+
+    Returns:
+        str: Confirmation message of the successful calendar deletion.
+    """
+    logger.info(
+        f"[delete_calendar] Invoked. Email: '{user_google_email}', Calendar ID: '{calendar_id}'"
+    )
+
+    if calendar_id == "primary":
+        raise Exception("Cannot delete the primary calendar.")
+
+    await asyncio.to_thread(
+        lambda: service.calendars().delete(calendarId=calendar_id).execute()
+    )
+
+    confirmation_message = (
+        f"Successfully deleted calendar (ID: {calendar_id}) for {user_google_email}. "
+        "This action is permanent and cannot be undone."
+    )
+    logger.info(f"Calendar deleted for {user_google_email}. ID: {calendar_id}")
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("share_calendar", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def share_calendar(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+    role: str = "reader",
+    scope_type: str = "user",
+    scope_value: Optional[str] = None,
+) -> str:
+    """Shares a calendar with a user, group, or domain by adding an access control rule.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar to share. Required.
+        role (str): Permission level. One of: "reader" (see all details), "writer" (edit events), "owner" (full control), "freeBusyReader" (see free/busy only). Defaults to "reader".
+        scope_type (str): Type of entity to share with. One of: "user" (individual), "group" (Google Group), "domain" (entire domain), "default" (public). Defaults to "user".
+        scope_value (Optional[str]): Email address or domain to share with. Required for "user", "group", and "domain" scope types. Not needed for "default" (public).
+
+    Returns:
+        str: Confirmation message with the sharing details.
+    """
+    logger.info(
+        f"[share_calendar] Invoked. Email: '{user_google_email}', Calendar: '{calendar_id}', "
+        f"Role: '{role}', Scope: '{scope_type}:{scope_value}'"
+    )
+
+    valid_roles = {"reader", "writer", "owner", "freeBusyReader"}
+    if role not in valid_roles:
+        raise Exception(f"Invalid role '{role}'. Must be one of: {', '.join(sorted(valid_roles))}")
+
+    valid_scope_types = {"user", "group", "domain", "default"}
+    if scope_type not in valid_scope_types:
+        raise Exception(f"Invalid scope_type '{scope_type}'. Must be one of: {', '.join(sorted(valid_scope_types))}")
+
+    if scope_type != "default" and not scope_value:
+        raise Exception(f"scope_value is required for scope_type '{scope_type}'.")
+
+    acl_body: Dict[str, Any] = {
+        "role": role,
+        "scope": {
+            "type": scope_type,
+        },
+    }
+    if scope_value:
+        acl_body["scope"]["value"] = scope_value
+
+    result = await asyncio.to_thread(
+        lambda: service.acl()
+        .insert(calendarId=calendar_id, body=acl_body)
+        .execute()
+    )
+
+    rule_id = result.get("id", "Unknown")
+    target = scope_value or "public"
+    confirmation_message = (
+        f"Successfully shared calendar '{calendar_id}' with {target} "
+        f"(role: {role}, type: {scope_type}) for {user_google_email}. Rule ID: {rule_id}"
+    )
+    logger.info(f"Calendar shared for {user_google_email}. Rule ID: {rule_id}")
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("list_calendar_sharing", is_read_only=True, service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def list_calendar_sharing(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+) -> str:
+    """Lists all access control rules (sharing permissions) for a calendar.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar. Required. Use list_calendars to find calendar IDs.
+
+    Returns:
+        str: Formatted list of all sharing rules with role, scope type, and scope value.
+    """
+    logger.info(
+        f"[list_calendar_sharing] Invoked. Email: '{user_google_email}', Calendar: '{calendar_id}'"
+    )
+
+    result = await asyncio.to_thread(
+        lambda: service.acl().list(calendarId=calendar_id).execute()
+    )
+
+    rules = result.get("items", [])
+    if not rules:
+        return f"No sharing rules found for calendar '{calendar_id}'."
+
+    output_lines = [f"Sharing rules for calendar '{calendar_id}' ({len(rules)} rules):"]
+    for rule in rules:
+        rule_id = rule.get("id", "Unknown")
+        role = rule.get("role", "Unknown")
+        scope = rule.get("scope", {})
+        scope_type = scope.get("type", "Unknown")
+        scope_value = scope.get("value", "N/A")
+        output_lines.append(
+            f"  - Rule ID: {rule_id} | Role: {role} | Type: {scope_type} | Value: {scope_value}"
+        )
+
+    result_text = "\n".join(output_lines)
+    logger.info(
+        f"[list_calendar_sharing] Found {len(rules)} rules for calendar '{calendar_id}'"
+    )
+    return result_text
+
+
+@server.tool()
+@handle_http_errors("update_calendar_sharing", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def update_calendar_sharing(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+    rule_id: str,
+    role: str,
+) -> str:
+    """Updates the permission level of an existing sharing rule on a calendar.
+
+    Use list_calendar_sharing to find rule IDs.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar. Required.
+        rule_id (str): The ID of the ACL rule to update (e.g., "user:someone@example.com"). Required.
+        role (str): New permission level. One of: "reader", "writer", "owner", "freeBusyReader". Required.
+
+    Returns:
+        str: Confirmation message with the updated sharing details.
+    """
+    logger.info(
+        f"[update_calendar_sharing] Invoked. Email: '{user_google_email}', "
+        f"Calendar: '{calendar_id}', Rule: '{rule_id}', New role: '{role}'"
+    )
+
+    valid_roles = {"reader", "writer", "owner", "freeBusyReader"}
+    if role not in valid_roles:
+        raise Exception(f"Invalid role '{role}'. Must be one of: {', '.join(sorted(valid_roles))}")
+
+    result = await asyncio.to_thread(
+        lambda: service.acl()
+        .patch(calendarId=calendar_id, ruleId=rule_id, body={"role": role})
+        .execute()
+    )
+
+    updated_role = result.get("role", "Unknown")
+    scope = result.get("scope", {})
+    scope_value = scope.get("value", "N/A")
+    confirmation_message = (
+        f"Successfully updated sharing rule '{rule_id}' on calendar '{calendar_id}' "
+        f"to role '{updated_role}' (scope: {scope_value}) for {user_google_email}."
+    )
+    logger.info(f"Calendar sharing updated for {user_google_email}. Rule: {rule_id}")
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("remove_calendar_sharing", service_type="calendar")
+@require_google_service("calendar", "calendar_full")
+async def remove_calendar_sharing(
+    service,
+    user_google_email: str,
+    calendar_id: str,
+    rule_id: str,
+) -> str:
+    """Removes a sharing rule from a calendar, revoking access for that user/group/domain.
+
+    Use list_calendar_sharing to find rule IDs.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        calendar_id (str): The ID of the calendar. Required.
+        rule_id (str): The ID of the ACL rule to remove (e.g., "user:someone@example.com"). Required.
+
+    Returns:
+        str: Confirmation message of the successful removal.
+    """
+    logger.info(
+        f"[remove_calendar_sharing] Invoked. Email: '{user_google_email}', "
+        f"Calendar: '{calendar_id}', Rule: '{rule_id}'"
+    )
+
+    await asyncio.to_thread(
+        lambda: service.acl()
+        .delete(calendarId=calendar_id, ruleId=rule_id)
+        .execute()
+    )
+
+    confirmation_message = (
+        f"Successfully removed sharing rule '{rule_id}' from calendar '{calendar_id}' "
+        f"for {user_google_email}."
+    )
+    logger.info(f"Calendar sharing removed for {user_google_email}. Rule: {rule_id}")
+    return confirmation_message
+
+
+@server.tool()
+@handle_http_errors("move_event", service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def move_event(
+    service,
+    user_google_email: str,
+    event_id: str,
+    source_calendar_id: str = "primary",
+    destination_calendar_id: str = "primary",
+) -> str:
+    """Moves an event from one calendar to another. Only the organizer can move events.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        event_id (str): The ID of the event to move. Required.
+        source_calendar_id (str): Calendar ID where the event currently lives. Defaults to "primary".
+        destination_calendar_id (str): Calendar ID to move the event to. Required.
+
+    Returns:
+        str: Confirmation message with the moved event details.
+    """
+    logger.info(
+        f"[move_event] Invoked. Email: '{user_google_email}', Event: '{event_id}', "
+        f"From: '{source_calendar_id}', To: '{destination_calendar_id}'"
+    )
+
+    if source_calendar_id == destination_calendar_id:
+        raise Exception("Source and destination calendars must be different.")
+
+    moved_event = await asyncio.to_thread(
+        lambda: service.events()
+        .move(
+            calendarId=source_calendar_id,
+            eventId=event_id,
+            destination=destination_calendar_id,
+        )
+        .execute()
+    )
+
+    event_summary = moved_event.get("summary", "Untitled")
+    event_link = moved_event.get("htmlLink", "")
+    confirmation_message = (
+        f"Successfully moved event '{event_summary}' (ID: {event_id}) "
+        f"from '{source_calendar_id}' to '{destination_calendar_id}' "
+        f"for {user_google_email}."
+    )
+    if event_link:
+        confirmation_message += f" Link: {event_link}"
+
+    logger.info(f"Event moved for {user_google_email}. ID: {event_id}")
+    return confirmation_message

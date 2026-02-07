@@ -53,6 +53,13 @@ calendar:
     - delete_event
     - query_freebusy
     - update_calendar
+    - create_calendar
+    - share_calendar
+    - list_calendar_sharing
+    - delete_calendar
+    - update_calendar_sharing
+    - remove_calendar_sharing
+    - move_event
   complete: []
 
 docs:
