@@ -324,7 +324,7 @@ async def list_calendars(service, user_google_email: str) -> str:
         return f"No calendars found for {user_google_email}."
 
     calendars_summary_list = [
-        f'- "{cal.get("summary", "No Summary")}"{" (Primary)" if cal.get("primary") else ""} (ID: {cal["id"]})'
+        f'- "{cal.get("summary", "No Summary")}"{" (Primary)" if cal.get("primary") else ""} (ID: {cal["id"]}) [accessRole: {cal.get("accessRole")}]'
         for cal in items
     ]
     text_output = (
