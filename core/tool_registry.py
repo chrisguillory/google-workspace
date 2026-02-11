@@ -105,6 +105,9 @@ def filter_server_tools(server):
                     if not is_tool_enabled(tool_name):
                         tools_to_remove.add(tool_name)
 
+            # 1b. Always keep utility tools available regardless of service selection
+            tools_to_remove.discard("list_google_accounts")
+
             # 2. OAuth 2.1 filtering
             if oauth21_enabled and "start_google_auth" in tool_registry:
                 tools_to_remove.add("start_google_auth")
