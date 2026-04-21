@@ -46,9 +46,22 @@ calendar:
     - manage_event
   extended:
     - create_calendar
+    - update_calendar
     - query_freebusy
     - manage_out_of_office
     - manage_focus_time
+    - move_event
+    - share_calendar
+    - list_calendar_sharing
+    - update_calendar_sharing
+    - remove_calendar_sharing
+  complete:
+    - delete_calendar
+
+accounts:
+  core:
+    - list_google_accounts
+  extended: []
   complete: []
 
 docs:

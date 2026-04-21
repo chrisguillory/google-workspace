@@ -180,6 +180,10 @@ def filter_server_tools(server):
                     )
                     tools_to_remove.add(tool_name)
 
+    # Never filter out cross-service account utility tools — they're needed
+    # regardless of tier/permissions to support multi-account workflows.
+    tools_to_remove.discard("list_google_accounts")
+
     for tool_name in tools_to_remove:
         try:
             server.local_provider.remove_tool(tool_name)

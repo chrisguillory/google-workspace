@@ -16,6 +16,7 @@ from fastmcp import FastMCP
 from fastmcp.server.auth.providers.google import GoogleProvider
 
 from auth.oauth21_session_store import get_oauth21_session_store, set_auth_provider
+from auth.credential_store import get_credential_store
 from auth.google_auth import handle_auth_callback, start_auth_flow, check_client_secrets
 from auth.oauth_config import is_oauth21_enabled, is_external_oauth21_provider
 from auth.mcp_session_middleware import MCPSessionMiddleware
@@ -693,3 +694,25 @@ async def start_google_auth(
     except Exception as e:
         logger.error(f"Failed to start Google authentication flow: {e}", exc_info=True)
         return f"**Error:** An unexpected error occurred: {e}"
+
+
+@server.tool()
+async def list_google_accounts() -> str:
+    """
+    List all Google accounts that have been authenticated and have stored credentials.
+
+    Returns a list of email addresses for accounts that have completed the OAuth
+    authentication flow. Use this to discover which accounts are available before
+    calling other Google Workspace tools.
+    """
+    store = get_credential_store()
+    users = store.list_users()
+
+    if not users:
+        return (
+            "No authenticated Google accounts found. "
+            "Use start_google_auth to authenticate a Google account."
+        )
+
+    accounts_list = "\n".join(f"- {email}" for email in users)
+    return f"Found {len(users)} authenticated Google account(s):\n{accounts_list}"
