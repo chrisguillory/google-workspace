@@ -58,11 +58,10 @@ calendar:
   complete:
     - delete_calendar
 
-accounts:
-  core:
-    - list_google_accounts
-  extended: []
-  complete: []
+# list_google_accounts is defined in core/server.py and force-kept across all
+# tier/permission filters in core/tool_registry.py::filter_server_tools. It has
+# no YAML section because every section here maps to a service import in main.py,
+# and this tool doesn't belong to any single service.
 
 docs:
   core:
