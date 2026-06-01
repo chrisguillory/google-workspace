@@ -804,3 +804,32 @@ async def start_google_auth(
     except Exception as e:
         logger.error(f"Failed to start Google authentication flow: {e}", exc_info=True)
         return f"**Error:** An unexpected error occurred: {e}"
+
+
+@server.tool(
+    title="List Google Accounts",
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+async def list_google_accounts() -> str:
+    """
+    List all Google accounts that have been authenticated and have stored credentials.
+
+    Returns the email addresses of accounts that have completed the OAuth flow. Use this
+    to discover which accounts are available before calling other Google Workspace tools.
+    """
+    from auth.credential_store import get_credential_store
+
+    store = get_credential_store()
+    users = store.list_users()
+    if not users:
+        return (
+            "No authenticated Google accounts found. "
+            "Use start_google_auth to authenticate a Google account."
+        )
+    accounts_list = "\n".join(f"- {email}" for email in users)
+    return f"Found {len(users)} authenticated Google account(s):\n{accounts_list}"
