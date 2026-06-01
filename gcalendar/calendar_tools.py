@@ -2551,9 +2551,9 @@ async def update_calendar(
     if result.get("timeZone"):
         details.append(f"Timezone: {result['timeZone']}")
     if result.get("description"):
-        details.append(f"Description: \"{result['description']}\"")
+        details.append(f'Description: "{result["description"]}"')
     if result.get("location"):
-        details.append(f"Location: \"{result['location']}\"")
+        details.append(f'Location: "{result["location"]}"')
 
     logger.info(f"[update_calendar] Updated calendar '{calendar_id}'")
     return (
@@ -2667,7 +2667,9 @@ async def manage_calendar_sharing(
         if not role:
             raise ValueError("role is required for the 'add' action")
         if role not in valid_roles:
-            raise ValueError(f"Invalid role '{role}'. Must be one of: {sorted(valid_roles)}")
+            raise ValueError(
+                f"Invalid role '{role}'. Must be one of: {sorted(valid_roles)}"
+            )
         valid_scope_types = {"user", "group", "domain", "default"}
         if scope_type not in valid_scope_types:
             raise ValueError(
@@ -2679,7 +2681,9 @@ async def manage_calendar_sharing(
         if scope_value:
             acl_body["scope"]["value"] = scope_value
         result = await asyncio.to_thread(
-            lambda: service.acl().insert(calendarId=calendar_id, body=acl_body).execute()
+            lambda: (
+                service.acl().insert(calendarId=calendar_id, body=acl_body).execute()
+            )
         )
         return (
             f"Shared calendar '{calendar_id}' with {scope_value or 'public'} "
@@ -2693,11 +2697,15 @@ async def manage_calendar_sharing(
         if not role:
             raise ValueError("role is required for the 'update' action")
         if role not in valid_roles:
-            raise ValueError(f"Invalid role '{role}'. Must be one of: {sorted(valid_roles)}")
+            raise ValueError(
+                f"Invalid role '{role}'. Must be one of: {sorted(valid_roles)}"
+            )
         result = await asyncio.to_thread(
-            lambda: service.acl()
-            .patch(calendarId=calendar_id, ruleId=rule_id, body={"role": role})
-            .execute()
+            lambda: (
+                service.acl()
+                .patch(calendarId=calendar_id, ruleId=rule_id, body={"role": role})
+                .execute()
+            )
         )
         scope = result.get("scope", {})
         return (
@@ -2709,10 +2717,80 @@ async def manage_calendar_sharing(
         if not rule_id:
             raise ValueError("rule_id is required for the 'remove' action")
         await asyncio.to_thread(
-            lambda: service.acl().delete(calendarId=calendar_id, ruleId=rule_id).execute()
+            lambda: (
+                service.acl().delete(calendarId=calendar_id, ruleId=rule_id).execute()
+            )
         )
         return f"Removed sharing rule '{rule_id}' from calendar '{calendar_id}' for {user_google_email}."
 
     raise ValueError(
         f"Invalid action '{action_lower}'. Must be 'list', 'add', 'update', or 'remove'."
     )
+
+
+@server.tool(
+    title="Move Event",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+@handle_http_errors("move_event", is_read_only=False, service_type="calendar")
+@require_google_service("calendar", "calendar_events")
+async def move_event(
+    service,
+    user_google_email: str,
+    event_id: str,
+    source_calendar_id: str = "primary",
+    destination_calendar_id: str = "primary",
+) -> str:
+    """Moves an event from one calendar to another (changes the organizing calendar).
+
+    Only the event organizer can move an event. Uses the Calendar API's
+    events().move() endpoint, which is distinct from manage_event — manage_event
+    cannot move an event between calendars.
+
+    Args:
+        user_google_email (str): The user's Google email address. Required.
+        event_id (str): The ID of the event to move. Required.
+        source_calendar_id (str): Calendar ID the event currently lives on. Defaults to "primary".
+        destination_calendar_id (str): Calendar ID to move the event to. Must differ from source.
+
+    Returns:
+        str: Confirmation with the moved event's summary and link.
+    """
+    logger.info(
+        f"[move_event] Invoked. Email: '{user_google_email}', Event: '{event_id}', "
+        f"From: '{source_calendar_id}', To: '{destination_calendar_id}'"
+    )
+
+    if source_calendar_id == destination_calendar_id:
+        raise ValueError(
+            "source_calendar_id and destination_calendar_id must be different."
+        )
+
+    moved_event = await asyncio.to_thread(
+        lambda: (
+            service.events()
+            .move(
+                calendarId=source_calendar_id,
+                eventId=event_id,
+                destination=destination_calendar_id,
+            )
+            .execute()
+        )
+    )
+
+    event_summary = moved_event.get("summary", "Untitled")
+    event_link = moved_event.get("htmlLink", "")
+    confirmation_message = (
+        f"Successfully moved event '{event_summary}' (ID: {event_id}) "
+        f"from '{source_calendar_id}' to '{destination_calendar_id}' for {user_google_email}."
+    )
+    if event_link:
+        confirmation_message += f" Link: {event_link}"
+
+    logger.info(f"[move_event] Event {event_id} moved for {user_google_email}.")
+    return confirmation_message

@@ -54,6 +54,7 @@ calendar:
     - manage_focus_time
     - update_calendar
     - manage_calendar_sharing
+    - move_event
   complete:
     - delete_calendar
 
