@@ -61,6 +61,20 @@ def _is_port_free(host: str, port: int) -> bool:
         return False
 
 
+def _bind_ephemeral(host: str) -> int:
+    """Bind port 0 so the OS assigns any free port; return the concrete port.
+
+    Mirrors the probe-then-rebind model of the fixed-port path: the socket is
+    closed immediately and the OAuth callback listener rebinds the returned
+    port. Downstream readers compose the redirect URI from this concrete port,
+    so an OS-assigned port round-trips correctly -- storing the literal "0"
+    would not, since the listener would rebind a different ephemeral port.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
 def resolve_port(
     preferred: Optional[int] = None,
     fallback_count: Optional[int] = None,
@@ -70,9 +84,12 @@ def resolve_port(
     Resolve the first available port in [preferred, preferred+1, ..., preferred+fallback_count].
 
     Reads defaults from env when args are None:
-      WORKSPACE_MCP_PORT (default 8000)                  -- preferred port
+      WORKSPACE_MCP_PORT (default 8000; 0 = OS-assigned ephemeral)  -- preferred port
       WORKSPACE_MCP_PORT_FALLBACK_COUNT (default 4)      -- fallback slots
       WORKSPACE_MCP_HOST (default 0.0.0.0)               -- bind host
+
+    A preferred port of 0 binds an OS-assigned ephemeral port, sidestepping the
+    fixed-range collision class (and its concurrent-instance ceiling) entirely.
 
     Side effect: mutates os.environ["WORKSPACE_MCP_PORT"] to the resolved port,
     so every downstream reader (auth.oauth_config singleton on next reload,
@@ -106,6 +123,13 @@ def resolve_port(
             ) from exc
     if host is None:
         host = os.getenv("WORKSPACE_MCP_HOST", "0.0.0.0")
+
+    if preferred == 0:
+        port = _bind_ephemeral(host)
+        logger.info("Port resolver: bound ephemeral port %d (preferred=0)", port)
+        os.environ["WORKSPACE_MCP_PORT"] = str(port)
+        os.environ[RESOLVED_PORT_ENV] = "1"
+        return port
 
     candidates = _candidate_ports(preferred, fallback_count)
     for port in candidates:
