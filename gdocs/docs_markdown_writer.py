@@ -5,7 +5,9 @@ a list of Docs API request dicts that, when applied in order, render the
 markdown into a document or a specific tab within a document.
 
 Supported constructs - headings H1-H6, paragraphs with inline bold/italic/
-code/links, ordered and unordered lists, fenced code blocks, blockquotes,
+code/links, ordered and unordered lists (a multi-paragraph item emits every
+paragraph - the first carries the bullet, continuations render bullet-less
+and indented within the item), fenced code blocks, blockquotes,
 horizontal rules, and image alt text linked to the image URL. GFM-only
 features (tables, strikethrough, task lists, autolinks) are not enabled;
 extend the parser config below if they become needed.
@@ -95,22 +97,34 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     if depth == 0:
                         break
                 j += 1
-            # Iterate items between i and j
+            # Iterate paragraphs between i and j. An item's first paragraph
+            # carries the bullet; each later paragraph in the same item is a
+            # continuation - emitted as its own bullet-less paragraph,
+            # indented to align under the item text.
+            continuation_ranges: list[tuple[int, int]] = []
+            awaiting_first_paragraph = False
             k = i + 1
             while k < j:
-                item = tokens[k]
-                if item.type == "list_item_open":
-                    # Inner structure typically - list_item_open, paragraph_open, inline, paragraph_close, list_item_close
-                    # Find the inline token within this list_item
-                    if k + 2 < j and tokens[k + 2].type == "inline":
-                        inline_tok = tokens[k + 2]
-                        text, inline_styles = _render_inline_with_styles(
-                            inline_tok.children or [], cursor[0], tab_id
-                        )
-                        text += "\n"
-                        requests.append(_build_insert_text(cursor[0], text, tab_id))
-                        cursor[0] += len(text)
-                        requests.extend(inline_styles)
+                if tokens[k].type == "list_item_open":
+                    awaiting_first_paragraph = True
+                elif (
+                    tokens[k].type == "paragraph_open"
+                    and k + 1 < j
+                    and tokens[k + 1].type == "inline"
+                ):
+                    inline_tok = tokens[k + 1]
+                    text, inline_styles = _render_inline_with_styles(
+                        inline_tok.children or [], cursor[0], tab_id
+                    )
+                    text += "\n"
+                    paragraph_start = cursor[0]
+                    requests.append(_build_insert_text(cursor[0], text, tab_id))
+                    cursor[0] += len(text)
+                    requests.extend(inline_styles)
+                    if awaiting_first_paragraph:
+                        awaiting_first_paragraph = False
+                    else:
+                        continuation_ranges.append((paragraph_start, cursor[0]))
                 k += 1
             list_end = cursor[0]
             # One createParagraphBullets covering the full list range
@@ -125,6 +139,26 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     }
                 }
             )
+            # Continuations shed the bullet the range-wide request just gave
+            # them - the list keeps one glyph per item and, for ordered
+            # lists, one number per item (paragraphs deleted from a list do
+            # not split it) - then indent to the level-0 bullet text position.
+            for paragraph_start, paragraph_end in continuation_ranges:
+                cont_rng = {"startIndex": paragraph_start, "endIndex": paragraph_end}
+                if tab_id:
+                    cont_rng["tabId"] = tab_id
+                requests.append({"deleteParagraphBullets": {"range": cont_rng}})
+                requests.append(
+                    {
+                        "updateParagraphStyle": {
+                            "range": dict(cont_rng),
+                            "paragraphStyle": {
+                                "indentStart": {"magnitude": 36, "unit": "PT"}
+                            },
+                            "fields": "indentStart",
+                        }
+                    }
+                )
             # Blank spacer paragraph between top-level blocks for visual spacing
             requests.append(_build_insert_text(cursor[0], "\n", tab_id))
             cursor[0] += 1

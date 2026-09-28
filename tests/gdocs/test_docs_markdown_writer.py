@@ -339,3 +339,95 @@ def test_paragraph_between_blocks_has_spacers_around_it():
     texts = [r["insertText"]["text"] for r in inserts]
     # Heading, spacer, paragraph, spacer
     assert texts == ["Title\n", "\n", "Body text\n", "\n"]
+
+
+def test_list_item_continuation_paragraphs_all_emit():
+    """Every paragraph of a multi-paragraph list item emits - nothing drops."""
+    requests = markdown_to_docs_requests("- first\n\n  more first\n- second")
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    # Both paragraphs of item one, then item two, then the single list spacer
+    assert texts == ["first\n", "more first\n", "second\n", "\n"]
+    # Contiguous placement - each insert starts where the previous ended
+    assert [r["insertText"]["location"]["index"] for r in inserts] == [1, 7, 18, 25]
+
+
+def test_list_item_continuation_sheds_bullet_and_indents():
+    """The range-wide bullet request covers continuations, so each continuation
+    deletes its bullet and indents to the level-0 bullet text position."""
+    requests = markdown_to_docs_requests("- first\n\n  more first\n- second")
+    bullets = [r for r in requests if "createParagraphBullets" in r]
+    deletes = [r for r in requests if "deleteParagraphBullets" in r]
+    indents = [r for r in requests if "updateParagraphStyle" in r]
+    # One createParagraphBullets still covers the full list range
+    assert len(bullets) == 1
+    assert bullets[0]["createParagraphBullets"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 25,
+    }
+    # The continuation paragraph - and only it - sheds its bullet and indents
+    assert len(deletes) == 1
+    assert deletes[0]["deleteParagraphBullets"]["range"] == {
+        "startIndex": 7,
+        "endIndex": 18,
+    }
+    assert len(indents) == 1
+    assert indents[0]["updateParagraphStyle"] == {
+        "range": {"startIndex": 7, "endIndex": 18},
+        "paragraphStyle": {"indentStart": {"magnitude": 36, "unit": "PT"}},
+        "fields": "indentStart",
+    }
+    # Bullet creation precedes the continuation's bullet deletion
+    assert requests.index(bullets[0]) < requests.index(deletes[0])
+
+
+def test_ordered_list_continuation_keeps_single_numbering_run():
+    """An ordered list with a continuation stays ONE list - a single
+    createParagraphBullets covers the whole range (deleting a middle
+    paragraph's bullet does not split the list), so numbering continues
+    across the continuation instead of restarting."""
+    md = "1. An ask.\n\n   A qualifying clause.\n\n2. Another ask."
+    requests = markdown_to_docs_requests(md)
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    assert texts == ["An ask.\n", "A qualifying clause.\n", "Another ask.\n", "\n"]
+    bullets = [r for r in requests if "createParagraphBullets" in r]
+    assert len(bullets) == 1
+    assert bullets[0]["createParagraphBullets"]["bulletPreset"] == (
+        "NUMBERED_DECIMAL_ALPHA_ROMAN"
+    )
+    assert bullets[0]["createParagraphBullets"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 43,
+    }
+    deletes = [r for r in requests if "deleteParagraphBullets" in r]
+    assert len(deletes) == 1
+    assert deletes[0]["deleteParagraphBullets"]["range"] == {
+        "startIndex": 9,
+        "endIndex": 30,
+    }
+
+
+def test_paragraph_after_nested_list_is_a_continuation_of_the_outer_item():
+    """A paragraph following a nested list inside an item emits as that outer
+    item's continuation; the nested item keeps its bullet."""
+    requests = markdown_to_docs_requests("- outer\n  - inner\n\n  outer cont")
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    assert texts == ["outer\n", "inner\n", "outer cont\n", "\n"]
+    deletes = [r for r in requests if "deleteParagraphBullets" in r]
+    # Only the trailing outer-continuation paragraph sheds its bullet
+    assert len(deletes) == 1
+    assert deletes[0]["deleteParagraphBullets"]["range"] == {
+        "startIndex": 13,
+        "endIndex": 24,
+    }
+
+
+def test_inline_styles_inside_a_continuation_land_at_its_offsets():
+    requests = markdown_to_docs_requests("- first\n\n  has **bold** word")
+    styles = [r for r in requests if "updateTextStyle" in r]
+    bold = [s for s in styles if s["updateTextStyle"]["textStyle"].get("bold")]
+    assert len(bold) == 1
+    # Continuation starts at 7; "has " is 4 chars, so bold spans 11..15
+    assert bold[0]["updateTextStyle"]["range"] == {"startIndex": 11, "endIndex": 15}
