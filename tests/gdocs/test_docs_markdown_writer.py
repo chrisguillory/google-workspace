@@ -431,3 +431,85 @@ def test_inline_styles_inside_a_continuation_land_at_its_offsets():
     assert len(bold) == 1
     # Continuation starts at 7; "has " is 4 chars, so bold spans 11..15
     assert bold[0]["updateTextStyle"]["range"] == {"startIndex": 11, "endIndex": 15}
+
+
+def test_astral_characters_advance_cursor_in_utf16_units():
+    """Google Docs indices count UTF-16 code units - an emoji occupies two.
+
+    "Launch 🚀 ready.\\n" is 16 code points but 17 UTF-16 units, so the
+    paragraph after it starts at 18 (17 + the start index), not 17.
+    """
+    requests = markdown_to_docs_requests("Launch 🚀 ready.\n\nSecond paragraph.")
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    assert texts == ["Launch 🚀 ready.\n", "\n", "Second paragraph.\n", "\n"]
+    indices = [r["insertText"]["location"]["index"] for r in inserts]
+    assert indices == [1, 18, 19, 37]
+
+
+def test_heading_with_astral_character_places_following_block_by_utf16():
+    requests = markdown_to_docs_requests("# Launch 🚀\n\nBody.")
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    assert texts == ["Launch 🚀\n", "\n", "Body.\n", "\n"]
+    # "Launch 🚀\n" is 10 UTF-16 units, so the heading range ends at 11
+    assert [r["insertText"]["location"]["index"] for r in inserts] == [1, 11, 12, 18]
+    styles = [r for r in requests if "updateParagraphStyle" in r]
+    assert styles[0]["updateParagraphStyle"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 11,
+    }
+
+
+def test_bold_range_after_an_astral_character_uses_utf16_offsets():
+    requests = markdown_to_docs_requests("A 🚀 then **bold** text.")
+    styles = [r for r in requests if "updateTextStyle" in r]
+    assert len(styles) == 1
+    # "A 🚀 then " is 10 UTF-16 units, so bold spans 11..15
+    assert styles[0]["updateTextStyle"]["range"] == {"startIndex": 11, "endIndex": 15}
+
+
+def test_inline_code_spanning_an_astral_character_takes_utf16_range():
+    requests = markdown_to_docs_requests("Use `go 🚀` now.")
+    styles = [r for r in requests if "updateTextStyle" in r]
+    assert len(styles) == 1
+    # "Use " is 4 units and "go 🚀" is 5, so the code span covers 5..10
+    assert styles[0]["updateTextStyle"]["range"] == {"startIndex": 5, "endIndex": 10}
+
+
+def test_fenced_code_with_astral_character_styles_the_full_utf16_range():
+    requests = markdown_to_docs_requests("```\nrocket 🚀\n```")
+    inserts = [r for r in requests if "insertText" in r]
+    assert inserts[0]["insertText"]["text"] == "rocket 🚀\n"
+    # "rocket 🚀\n" is 10 UTF-16 units; the style stops before the newline
+    styles = [r for r in requests if "updateTextStyle" in r]
+    assert styles[0]["updateTextStyle"]["range"] == {"startIndex": 1, "endIndex": 10}
+    # The spacer lands one past the block's UTF-16 end
+    assert inserts[1]["insertText"]["location"]["index"] == 11
+
+
+def test_list_continuation_ranges_after_astral_item_use_utf16_units():
+    requests = markdown_to_docs_requests("- first 🚀\n\n  more\n- second")
+    inserts = [r for r in requests if "insertText" in r]
+    # "first 🚀\n" is 9 UTF-16 units, so the continuation starts at 10
+    assert [r["insertText"]["location"]["index"] for r in inserts] == [1, 10, 15, 22]
+    bullets = [r for r in requests if "createParagraphBullets" in r]
+    assert bullets[0]["createParagraphBullets"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 22,
+    }
+    deletes = [r for r in requests if "deleteParagraphBullets" in r]
+    assert deletes[0]["deleteParagraphBullets"]["range"] == {
+        "startIndex": 10,
+        "endIndex": 15,
+    }
+
+
+def test_blockquote_indent_range_spans_utf16_units():
+    requests = markdown_to_docs_requests("> quoted 🚀 wisdom")
+    styles = [r for r in requests if "updateParagraphStyle" in r]
+    # "quoted 🚀 wisdom\n" is 17 UTF-16 units, so the indent range ends at 18
+    assert styles[0]["updateParagraphStyle"]["range"] == {
+        "startIndex": 1,
+        "endIndex": 18,
+    }

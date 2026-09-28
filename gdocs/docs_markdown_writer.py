@@ -4,6 +4,9 @@ Parses CommonMark markdown via markdown-it-py (commonmark preset) and emits
 a list of Docs API request dicts that, when applied in order, render the
 markdown into a document or a specific tab within a document.
 
+Every emitted index and range counts UTF-16 code units - the unit of Google
+Docs indices - so an astral-plane character (emoji) occupies two positions.
+
 Supported constructs - headings H1-H6, paragraphs with inline bold/italic/
 code/links, ordered and unordered lists (a multi-paragraph item emits every
 paragraph - the first carries the bullet, continuations render bullet-less
@@ -48,11 +51,21 @@ def markdown_to_docs_requests(
     return requests
 
 
+def _utf16_length(text: str) -> int:
+    """Number of Google Docs index units in Unicode text (two for non-BMP characters).
+
+    Mirrors gdocs.docs_helpers.utf16_length; kept local so this module stays
+    self-contained (stdlib + markdown-it-py), which downstream vendoring relies on.
+    """
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _emit_requests(tokens, requests, tab_id, start_index):
     """Walk markdown-it tokens and append Docs API requests.
 
     Maintains a running `cursor` that represents the current insertion point
-    in the document. Each insertText advances cursor by len(text).
+    in the document. Each insertText advances cursor by the UTF-16 length of
+    its text.
     """
     cursor = [start_index]  # mutable via list so helpers can advance it
 
@@ -69,7 +82,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             text += "\n"
             range_start = cursor[0]
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             requests.append(_build_heading_style(range_start, cursor[0], level, tab_id))
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing
@@ -119,7 +132,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     text += "\n"
                     paragraph_start = cursor[0]
                     requests.append(_build_insert_text(cursor[0], text, tab_id))
-                    cursor[0] += len(text)
+                    cursor[0] += _utf16_length(text)
                     requests.extend(inline_styles)
                     if awaiting_first_paragraph:
                         awaiting_first_paragraph = False
@@ -174,7 +187,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             # more blank line than other top-level blocks.
             text = content if content.endswith("\n") else content + "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             # Style the code characters but not the paragraph-ending newline.
             code_end = cursor[0] - 1
             _append_text_style(
@@ -218,7 +231,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
                     )
                     text += "\n"
                     requests.append(_build_insert_text(cursor[0], text, tab_id))
-                    cursor[0] += len(text)
+                    cursor[0] += _utf16_length(text)
                     requests.extend(inline_styles)
                     k += 3
                     continue
@@ -260,7 +273,7 @@ def _emit_requests(tokens, requests, tab_id, start_index):
             )
             text += "\n"
             requests.append(_build_insert_text(cursor[0], text, tab_id))
-            cursor[0] += len(text)
+            cursor[0] += _utf16_length(text)
             requests.extend(inline_styles)
             # Blank spacer paragraph between top-level blocks for visual spacing.
             # Only top-level paragraphs receive spacers - list-item paragraphs
@@ -291,7 +304,7 @@ def _render_inline_with_styles(
     """
     text_parts: list[str] = []
     style_requests: list[dict] = []
-    local_pos = 0  # position within this inline block (0-based)
+    local_pos = 0  # position within this inline block, in UTF-16 units (0-based)
     # Stack entries are tuples. For strong/em: (style_name, start_local_pos).
     # For link: (style_name, start_local_pos, href).
     stack: list[tuple] = []
@@ -299,7 +312,7 @@ def _render_inline_with_styles(
     for tok in children:
         if tok.type == "text":
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
         elif tok.type == "softbreak":
             text_parts.append(" ")
             local_pos += 1
@@ -310,7 +323,7 @@ def _render_inline_with_styles(
             # self-contained - emit style immediately
             start_local = local_pos
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
             _append_text_style(
                 style_requests,
                 base_index + start_local,
@@ -361,7 +374,7 @@ def _render_inline_with_styles(
             if label:
                 start_local = local_pos
                 text_parts.append(label)
-                local_pos += len(label)
+                local_pos += _utf16_length(label)
                 if src:
                     _append_text_style(
                         style_requests,
@@ -373,7 +386,7 @@ def _render_inline_with_styles(
                     )
         elif tok.type in ("html_inline", "html_block"):
             text_parts.append(tok.content)
-            local_pos += len(tok.content)
+            local_pos += _utf16_length(tok.content)
 
     return "".join(text_parts), style_requests
 
